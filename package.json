@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "description": "YT Script · YouTube 视频文稿提取工具（零依赖，支持本地运行与 Vercel 一键部署）",
-  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js --port 8790"

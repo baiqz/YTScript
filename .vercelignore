@@ -5,3 +5,8 @@ _scratch/
 start.bat
 README.md
 DEPLOY.md
+
+# server.js 是本地启动器（常驻 HTTP 服务），云端用不到。
+# 必须排除：否则 Vercel 会把它当成 Serverless 函数入口，生成一个「兜底函数」
+# 截胡所有非静态路由（含 / 和 /api/*），一调用就 FUNCTION_INVOCATION_FAILED。
+server.js
