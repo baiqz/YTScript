@@ -250,11 +250,94 @@ function closeSettings() {
 
 /* ------------------------------ 提取流程 ------------------------------ */
 
+/* 链接预检（本地）
+ * 与服务端 lib/url.js 用同一套判定标准。目的是把「链接少复制了一位」这类
+ * 高频低级错误在浏览器里就地拦下——否则用户要白等一次请求，还只能收到
+ * 一句笼统的「无法识别链接」，完全不知道错在哪一位。 */
+const ID_LEN = 11;
+
+/* 正向提取规则：与服务端 lib/url.js 的 PATTERNS 必须逐条一致，
+ * 否则会出现「前端拦下合法链接、服务端却认」的不一致。 */
+const ID_PATTERNS = [
+  /(?:youtube\.com|youtube-nocookie\.com)\/watch\?(?:.*&)?v=([A-Za-z0-9_-]{11})/i,
+  /youtu\.be\/([A-Za-z0-9_-]{11})/i,
+  /(?:youtube\.com|youtube-nocookie\.com)\/(?:embed|v|e)\/([A-Za-z0-9_-]{11})/i,
+  /(?:youtube\.com|youtube-nocookie\.com)\/shorts\/([A-Za-z0-9_-]{11})/i,
+  /(?:youtube\.com|youtube-nocookie\.com)\/live\/([A-Za-z0-9_-]{11})/i,
+  /[?&]v=([A-Za-z0-9_-]{11})/,
+];
+
+function preflight(raw) {
+  const compact = String(raw || '').replace(/\s/g, '');
+  if (!compact) {
+    return {
+      ok: false,
+      title: '请先填写视频链接',
+      body: `支持 youtube.com/watch、youtu.be、shorts、live 等链接，或直接填 ${ID_LEN} 位视频 ID。`,
+    };
+  }
+
+  // 正向：能解析出 11 位 ID 就直接放行
+  if (new RegExp(`^[A-Za-z0-9_-]{${ID_LEN}}$`).test(compact)) return { ok: true, id: compact };
+  for (const re of ID_PATTERNS) {
+    const m = compact.match(re);
+    if (m) return { ok: true, id: m[1] };
+  }
+
+  // 反向：解析不出来时，尽量说清是哪里不对
+  const byQuery = /[?&]v=([A-Za-z0-9_-]+)/.exec(compact);
+  if (byQuery && byQuery[1].length !== ID_LEN) {
+    return {
+      ok: false,
+      title: `链接里的视频 ID 是 ${byQuery[1].length} 位，YouTube 固定 ${ID_LEN} 位。`,
+      body: `解析到「${byQuery[1]}」。多半是复制时漏了字符，请重新完整复制链接。`,
+    };
+  }
+
+  const byPath = /(?:youtu\.be\/|shorts\/|live\/|embed\/|youtube\.com\/v\/)([A-Za-z0-9_-]+)/i.exec(compact);
+  if (byPath && byPath[1].length !== ID_LEN) {
+    return {
+      ok: false,
+      title: `链接里的视频 ID 是 ${byPath[1].length} 位，应为 ${ID_LEN} 位。`,
+      body: `解析到「${byPath[1]}」。请重新完整复制链接，或直接填 ${ID_LEN} 位视频 ID。`,
+    };
+  }
+
+  if (/^[A-Za-z0-9_-]+$/.test(compact) && compact.length !== ID_LEN) {
+    return {
+      ok: false,
+      title: `视频 ID 应为 ${ID_LEN} 位，当前是 ${compact.length} 位。`,
+      body: `收到「${compact}」。请检查是否漏了字符（ID 区分大小写）。`,
+    };
+  }
+
+  if (/(?:youtube\.com|youtu\.be|youtube-nocookie\.com)/i.test(compact)) {
+    return {
+      ok: false,
+      title: `链接里没有找到 ${ID_LEN} 位的视频 ID。`,
+      body: '请确认链接是视频页（watch / youtu.be / shorts / live），而不是频道页或播放列表页。',
+    };
+  }
+
+  return {
+    ok: false,
+    title: '无法识别视频链接',
+    body: `请粘贴完整的 YouTube 视频地址，或直接填 ${ID_LEN} 位视频 ID。`,
+  };
+}
+
 async function extract(url, opts = {}) {
   if (state.loading) return;
   const target = (url !== undefined ? url : el.urlInput.value).trim();
   if (!target) {
-    setStatus('err', '请先填写视频链接', '支持 youtube.com/watch、youtu.be、shorts、live 等链接，或直接填 11 位视频 ID。');
+    setStatus('err', '请先填写视频链接', `支持 youtube.com/watch、youtu.be、shorts、live 等链接，或直接填 ${ID_LEN} 位视频 ID。`);
+    el.urlInput.focus();
+    return;
+  }
+
+  const pre = preflight(target);
+  if (!pre.ok) {
+    setStatus('err', pre.title, pre.body);
     el.urlInput.focus();
     return;
   }
