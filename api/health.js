@@ -38,6 +38,13 @@ module.exports = async function handler(req, res) {
 
     rateLimit: { max: cfg.rateLimitMax, windowMs: cfg.rateLimitWindowMs },
     cacheTtlSec: Math.floor(cfg.cacheTtlMs / 1000),
+
+    // 本机中继：只说明「配没配」，绝不回显地址或令牌
+    relayConfigured: Boolean(String(cfg.relayUrl || '').trim() && String(cfg.relayToken || '').trim()),
+    // 本机这一端是否以中继模式运行（会被公网隧道暴露）
+    relayMode: config.isRelayMode(),
+    relayTokenSet: Boolean(String(cfg.relayToken || '').trim()),
+
     time: new Date().toISOString(),
   };
 
@@ -46,6 +53,8 @@ module.exports = async function handler(req, res) {
     payload.activeProxy = info.activeProxy;
     payload.transportError = info.transportError || '';
     payload.candidates = cands;
+    // 自己电脑上跑，回显中继地址方便核对拼写
+    payload.relayUrl = cfg.relayUrl;
   }
 
   if (getParam(req, 'probe') === '1') {

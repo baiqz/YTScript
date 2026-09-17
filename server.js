@@ -18,6 +18,8 @@ const { URL } = require('node:url');
 
 const { setProxy, ensureTransport, request, getProxyInfo } = require('./lib/http-client');
 const { json } = require('./lib/api-respond');
+const config = require('./lib/config');
+const { safeEqual } = require('./lib/guard');
 
 const transcriptHandler = require('./api/transcript');
 const healthHandler = require('./api/health');
@@ -30,7 +32,20 @@ function argValue(flag) {
   return i > -1 ? process.argv[i + 1] : undefined;
 }
 
-const BASE_PORT = Number(argValue('--port') || process.env.PORT || 8790);
+/*
+ * 中继模式（--relay）：本实例会被公网隧道暴露出去，供云端函数转发取数请求。
+ * 这时它是「对外服务」，安全边界必须收紧：
+ *   - 改代理接口直接 403 —— 否则任何路过的人都能把出口指向别处，等于送人一个 SSRF；
+ *   - 其余 /api/* 一律校验中继令牌，区分「云端的合法转发」和「随便路过的人」；
+ *   - 只有 /api/health 保持开放（不含敏感信息，且被用来探活排障）。
+ * 令牌优先取环境变量，没有就自动生成并写进 config.json（该文件不入库）。
+ */
+const RELAY_MODE = config.isRelayMode();
+const RELAY_TOKEN = RELAY_MODE ? config.ensureRelayToken() : '';
+
+// 中继模式换一个默认端口：本地日常那份服务通常已经占着 8790，
+// 而且隧道要指向固定端口，两者冲突会很难查
+const BASE_PORT = Number(argValue('--port') || process.env.PORT || (RELAY_MODE ? 8801 : 8790));
 const HOST = argValue('--host') || '127.0.0.1';
 const NO_OPEN = process.argv.includes('--no-open') || process.env.WB_NO_OPEN === '1';
 const MAX_PORT_TRIES = 10;
@@ -91,8 +106,54 @@ const API_ROUTES = {
   '/api/proxy': proxyHandler,
 };
 
+/** 中继模式下校验令牌（支持请求头与 ?token= 两种带法） */
+function relayAuthorized(req) {
+  if (!RELAY_MODE) return true;
+  if (!RELAY_TOKEN) return false;
+  const h = req.headers || {};
+  const fromHeader = h['x-relay-token'] || '';
+  let fromQuery = '';
+  try {
+    fromQuery = new URL(req.url, 'http://x').searchParams.get('token') || '';
+  } catch {
+    /* ignore */
+  }
+  const given = String(fromHeader || fromQuery);
+  return given ? safeEqual(given, RELAY_TOKEN) : false;
+}
+
+/** 中继模式下这个端口是公网可达的，先把该拦的都拦掉 */
+function guardRelay(req, res, pathname) {
+  if (!RELAY_MODE || !pathname.startsWith('/api/')) return false;
+
+  if (pathname === '/api/proxy') {
+    json(res, 403, {
+      ok: false,
+      error: '中继模式下不允许远程修改出口代理',
+      code: 'FORBIDDEN',
+    });
+    return true;
+  }
+
+  // 健康检查保持开放：不含敏感信息，且要供探活与排障使用
+  if (pathname === '/api/health') return false;
+
+  if (!relayAuthorized(req)) {
+    json(res, 401, {
+      ok: false,
+      error: '缺少或错误的中继令牌',
+      code: 'RELAY_UNAUTHORIZED',
+      hint: '这个端口已对外暴露，只有携带正确 X-Relay-Token 的请求才会被受理。',
+    });
+    return true;
+  }
+  return false;
+}
+
 const server = http.createServer(async (req, res) => {
   const p = new URL(req.url, `http://${req.headers.host || 'localhost'}`).pathname;
+
+  if (guardRelay(req, res, p)) return;
 
   const handler = API_ROUTES[p];
   if (handler) {
@@ -218,6 +279,16 @@ async function onReady(port) {
   console.log('');
   console.log('  浏览器会自动打开。若没反应，手动访问上面的地址即可。');
   console.log('  按 Ctrl+C 停止服务。');
+
+  if (RELAY_MODE) {
+    console.log('');
+    console.log('  中继模式已开启 —— 本端口经由隧道对外提供服务');
+    console.log(`  中继令牌   ${RELAY_TOKEN}`);
+    console.log('  1) 把上面的令牌填到部署平台的 RELAY_TOKEN 环境变量');
+    console.log('  2) 把隧道给出的公网地址填到 RELAY_URL');
+    console.log('  安全边界：/api/proxy 已禁用，其余 /api/* 均需令牌');
+  }
+
   console.log(`${'─'.repeat(56)}\n`);
 
   server.on('error', (e) => {
@@ -247,7 +318,11 @@ async function boot() {
   console.log('  YT Script · YouTube 视频文稿提取工具');
   console.log(line);
 
-  for (let i = 0; i < MAX_PORT_TRIES; i++) {
+  // 中继模式不做端口顺延：隧道指向的是固定端口，悄悄换端口只会让中继连不上、
+  // 而且报错点离现场很远。宁可当场停下来说清楚。
+  const maxTries = RELAY_MODE ? 1 : MAX_PORT_TRIES;
+
+  for (let i = 0; i < maxTries; i++) {
     const port = BASE_PORT + i;
 
     // 本应用已经在跑：直接把页面调出来，不当成错误
@@ -255,6 +330,10 @@ async function boot() {
     if (existing) {
       console.log(`  已经在运行 ${HOST}:${port}（无需重复启动）`);
       console.log(`  网络通路   ${describeTransport(existing)}`);
+      if (RELAY_MODE) {
+        console.log(`  中继令牌   ${RELAY_TOKEN}`);
+        console.log('  （已开启中继模式；若刚改过令牌，请先关掉旧窗口再重启）');
+      }
       console.log('');
       console.log('  已为你打开浏览器，可直接关掉这个窗口。');
       console.log(`${line}\n`);
@@ -270,6 +349,16 @@ async function boot() {
       console.error(`\n服务启动失败: ${err.message}\n`);
       process.exit(1);
     }
+
+    if (RELAY_MODE) {
+      console.error('');
+      console.error(`端口 ${port} 已被占用。中继模式下端口必须固定（公网隧道要指向它），不会自动顺延。`);
+      console.error(`请换一个端口重试，例如：`);
+      console.error(`  node server.js --relay --port ${port + 1}`);
+      console.error('');
+      process.exit(1);
+    }
+
     console.log(`  端口 ${port} 被占用，自动改用 ${port + 1} ...`);
   }
 

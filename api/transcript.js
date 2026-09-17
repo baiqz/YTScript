@@ -10,6 +10,7 @@ const config = require('../lib/config');
 const { fetchTranscript } = require('../lib/youtube');
 const { json, errorPayload, cacheHeaders, getParam } = require('../lib/api-respond');
 const { clientIp, checkAccess, checkRateLimit, withTimeout } = require('../lib/guard');
+const { relayUsable, relayTranscript } = require('../lib/relay');
 
 // 复用实例内的网络通路判定结果，避免每次调用重复探测
 const { ensureTransport } = require('../lib/http-client');
@@ -53,17 +54,51 @@ module.exports = async function handler(req, res) {
   const force = getParam(req, 'force') === '1';
 
   const started = Date.now();
+  let relayNote = '';
+
+  // 翻译要现场生成，比首次提取慢得多，因此给两条不同的预算。
+  // 中继与直连共用这一份预算 —— 否则「中继超时 45s + 再降级直连 25s」会超出
+  // 无服务器平台的函数时长上限，被平台直接掐断，连错误信息都拿不到。
+  const totalMs = tlang ? cfg.translateTimeoutMs : cfg.requestTimeoutMs;
+
   try {
+    /*
+     * 第一优先：本机中继。
+     *
+     * 本机出口是住宅网络，取数成功率实测 100%；而云端共享出口对高风控视频
+     * 会被 YouTube 拦下（详见 DEPLOY.md 4.5）。所以只要配了中继就先走中继。
+     */
+    if (relayUsable(cfg)) {
+      let out = null;
+      try {
+        out = await relayTranscript(cfg, { req, clientIp: clientIp(req), budgetMs: totalMs });
+      } catch (e) {
+        relayNote = `本机中继不可用（${e.message}），已改走云端直连。`;
+      }
+
+      if (out && !out.relaySideFailure) {
+        const body = { ...out.payload, viaRelay: true, elapsedMs: Date.now() - started };
+        if (out.payload && out.payload.ok) {
+          const degraded = Boolean(tlang && !out.payload.translatedTo);
+          return json(res, 200, body, degraded ? { 'Cache-Control': 'no-store' } : cacheHeaders(force, cfg));
+        }
+        // 中继正常返回的业务错误原样透传，不要再去直连撞一次风控
+        return json(res, out.status || 502, body);
+      }
+      if (out) relayNote = `本机中继拒绝了请求（HTTP ${out.status}），已改走云端直连。`;
+    }
+
     // 确保网络通路已判定（单候选时为零开销）
     await ensureTransport();
 
-    // 翻译要现场生成，比首次提取慢得多，因此给两条不同的预算
-    const totalMs = tlang ? cfg.translateTimeoutMs : cfg.requestTimeoutMs;
+    // 降级直连时只剩「总预算减去已花掉的时间」，不足 6 秒就按 6 秒收尾，
+    // 宁可快速失败也不要被平台掐断
+    const leftMs = Math.max(6_000, totalMs - (Date.now() - started));
     const deadline = started + totalMs;
 
     const data = await withTimeout(
       fetchTranscript(target, { lang, tlang, force, deadline }),
-      totalMs,
+      leftMs,
       '服务端访问 YouTube 超时（可能是出口网络受限）。'
     );
 
@@ -71,13 +106,16 @@ module.exports = async function handler(req, res) {
       res.setHeader('X-RateLimit-Remaining', String(rl.remaining));
     }
 
+    // 中继没走通时，把原因一并告诉用户，避免"明明配了中继却没生效"这种哑火
+    if (relayNote && !data.warning) data.warning = relayNote;
+
     // 翻译失败但原文已拿到时，不要写进 CDN 缓存，
     // 否则用户半天内都点不到一次「重试翻译」
     const degraded = Boolean(tlang && !data.translatedTo);
     return json(
       res,
       200,
-      { ok: true, elapsedMs: Date.now() - started, ...data },
+      { ok: true, elapsedMs: Date.now() - started, viaRelay: false, ...data },
       degraded ? { 'Cache-Control': 'no-store' } : cacheHeaders(force, cfg)
     );
   } catch (e) {

@@ -3,8 +3,11 @@ config.json
 docs/
 _scratch/
 start.bat
+relay.bat
 README.md
 DEPLOY.md
+cloudflared.exe
+tools/
 
 # server.js 是本地启动器（常驻 HTTP 服务），云端用不到。
 # 必须排除：否则 Vercel 会把它当成 Serverless 函数入口，生成一个「兜底函数」

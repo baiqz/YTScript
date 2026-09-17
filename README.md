@@ -113,6 +113,10 @@ curl "http://127.0.0.1:8790/api/transcript?url=https://youtu.be/dQw4w9WgXcQ&tlan
 
 | 变量 | 默认值 | 作用 |
 | --- | --- | --- |
+| `RELAY_URL` | 空 | **本机中继地址**，如 `https://xxx.trycloudflare.com`。让云端借用你本机的出口访问 YouTube，根治机房 IP 被风控的问题，见下文「本机中继」 |
+| `RELAY_TOKEN` | 空 | 中继令牌，与 `RELAY_URL` 配套。运行 `relay.bat` 时会打印出来 |
+| `RELAY_TIMEOUT_MS` | `50000` | 转发到中继的超时上限，超时后自动降级为云端直连 |
+| `RELAY_MODE` | 本机自动开启 | 本机侧是否以中继模式运行（`relay.bat` 已自动带 `--relay`） |
 | `PROXY_URL` | 空 | 出口代理，如 `http://user:pass@host:port`，优先级高于 `config.json` |
 | `PUBLIC_MODE` | 云端自动为 `1`，本地 `0` | 公开部署模式：启用防护、封禁危险接口、不泄露内部细节 |
 | `ACCESS_CODE` | 空 | 设置后需 `?code=xxx` 或 `X-Access-Code` 头才能访问 |
@@ -125,24 +129,61 @@ curl "http://127.0.0.1:8790/api/transcript?url=https://youtu.be/dQw4w9WgXcQ&tlan
 
 ---
 
+## 本机中继：让云端借用你家宽带的出口
+
+**要解决的问题**：部署到 Vercel 这类平台后，出口是**共享的机房 IP**，YouTube 会对它判定为高风险，
+要求人机凭证（PO token），于是很多视频报 `POT_REQUIRED`。实测中文知识类视频**云端 0/8 全被拦**，
+而同一批视频在**你本机（住宅出口）3/8 成功**（另 5 个视频本身就没字幕）。
+
+换客户端、带 `visitorData`、重试都已实测无效 —— 唯一变量就是出口 IP 的属性。
+
+**做法**：云端函数不再自己访问 YouTube，而是把请求转发回**你自己电脑**上跑的服务：
+
+```
+访客 → Vercel 函数 → 公网隧道 → 你电脑的 server.js（--relay 模式）→ YouTube
+```
+
+**三步**：
+
+1. 把 `cloudflared.exe` 放进项目目录（下载地址见 `DEPLOY.md` 4.6）
+2. 双击 **`relay.bat`**，它会打印一个 `RELAY_TOKEN`，并开出一条 `https://xxx.trycloudflare.com` 隧道
+3. 把这两个值填到部署平台的 `RELAY_TOKEN` / `RELAY_URL` 环境变量，然后 **Redeploy**
+
+之后只要那个窗口开着，云端就走你家出口。窗口关了会自动退回云端直连（站点不会挂）。
+
+**安全边界**（中继模式的端口是公网可达的，因此收紧）：
+
+| 措施 | 效果 |
+| --- | --- |
+| 所有 `/api/*` 校验 `X-Relay-Token` | 无正确令牌返回 `401 RELAY_UNAUTHORIZED` |
+| `/api/proxy` 直接封禁 | 返回 `403 FORBIDDEN`，防止路人把出口改成任意地址（SSRF） |
+| 令牌用定长时间比较 | 不用 `===`，避免被逐字节试探 |
+| 仅 `/api/health` 开放 | 不含敏感信息，供探活排障 |
+
+**完整操作步骤、验证方法、故障排查见 [`DEPLOY.md` 4.6](DEPLOY.md)。**
+
+---
+
 ## 目录结构
 
 ```
 youtube-transcript/
 ├─ server.js              本地服务（静态资源 + API 路由）
-├─ start.bat              Windows 一键启动
+├─ start.bat              Windows 一键启动（本机模式）
+├─ relay.bat              Windows 一键启动（本机中继模式，端口 8801）
 ├─ vercel.json            云端部署配置
 ├─ DEPLOY.md              部署到互联网的完整步骤
-├─ config.json            运行期自动生成，记录可用的代理地址（已被 .gitignore 排除）
+├─ config.json            运行期自动生成，记录可用的代理地址与中继令牌（已被 .gitignore 排除）
 ├─ config.example.json    配置文件示例
 ├─ api/                   接口处理器（本地服务与云端函数共用）
 │  ├─ transcript.js       文稿提取
 │  ├─ health.js           状态检查
-│  └─ proxy.js            代理切换（云端下自动封禁）
+│  └─ proxy.js            代理切换（云端与中继模式下自动封禁）
 ├─ lib/
 │  ├─ http-client.js      零依赖 HTTP 客户端（CONNECT 隧道 / 解压 / 通路择优）
 │  ├─ youtube.js          取数与字幕解析核心
-│  ├─ guard.js            限流 / 超时护栏
+│  ├─ relay.js            本机中继：把提取请求转发回本机出口
+│  ├─ guard.js            限流 / 超时护栏 / 定长时间比较
 │  ├─ api-respond.js      统一响应与错误封装
 │  ├─ util.js             通用工具
 │  ├─ url.js              视频 ID 解析
@@ -159,10 +200,14 @@ youtube-transcript/
 
 ## 已知限制
 
-- **`start.bat` 必须保持「纯 ASCII + CRLF 换行」**。cmd.exe 解析 LF 换行的批处理会错乱
+- **`start.bat` 与 `relay.bat` 必须保持「纯 ASCII + CRLF 换行」**。cmd.exe 解析 LF 换行的批处理会错乱
   （多行 `for` / `if` 块被拆散）；文件里混入中文等多字节字符时，解析器还会把中文拆开当成命令执行。
-  `.gitattributes` 已用 `*.bat text eol=crlf` 锁住换行符，**改动该文件时不要写中文注释**，
+  `.gitattributes` 已用 `*.bat text eol=crlf` 锁住换行符，**改动这些文件时不要写中文注释**，
   用户可见的中文提示一律由 Node 端输出（Node 写 UTF-8，脚本已把控制台切到 65001）。
+  另注意：这两个脚本都**不要用 `for /f` 去捕获带引号的绝对路径命令输出** —— cmd 会剥掉外层引号，
+  路径含空格时报 `'C:\Program' is not recognized`（`relay.bat` 改用临时文件 + `set /p` 绕开）。
+- **中继模式下端口固定为 8801，不会自动顺延**。隧道指向固定端口，悄悄换端口只会让中继连不上、
+  报错点离现场很远，因此宁可当场退出并提示换端口。本机日常那份服务（端口 8790）可与它同时运行。
 - 视频本身没有字幕（未上传且未开启自动字幕）时无法提取，接口会返回 `NO_CAPTIONS`。
 - 翻译与字幕接口存在频率限制，连续批量提取时可能返回 `429`，稍等重试即可。
   翻译不成功时接口仍返回 `200` + 原文字幕，并在 `warning` 字段说明原因。
