@@ -1,0 +1,17 @@
+# 统一换行符，避免 Windows 上的批处理文件被 Git 转成 LF 后无法运行
+# （.bat 必须是 CRLF，否则 cmd.exe 解析多行语句会错乱）
+* text=auto
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.sh  text eol=lf
+*.js  text eol=lf
+*.json text eol=lf
+*.md  text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.ico binary

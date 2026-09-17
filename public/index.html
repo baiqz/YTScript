@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YT Script · YouTube 视频文稿提取工具</title>
+<meta name="description" content="粘贴 YouTube 链接，一键提取视频字幕文稿。支持多语言轨道、翻译成 100+ 语言、时间戳跳转、导出 TXT / SRT / VTT / JSON。免费、无需登录。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff3d3d'/%3E%3Cpath d='M13 10.5v11l9-5.5z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<div class="bg-grid" aria-hidden="true"></div>
+<div class="bg-glow" aria-hidden="true"></div>
+
+<!-- ============ 导航 ============ -->
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">
+      <span class="brand-mark">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="4" fill="currentColor"/><path d="M10 9.2v5.6l4.8-2.8z" fill="#0a0b0f"/></svg>
+      </span>
+      <span class="brand-text">YT <b>Script</b></span>
+    </a>
+    <nav class="nav-links">
+      <a href="#app">开始提取</a>
+      <a href="#features">功能</a>
+      <a href="#how">使用说明</a>
+      <a href="#faq">常见问题</a>
+    </nav>
+    <div class="nav-right">
+      <button id="netStatus" class="net-pill" type="button" title="点击配置网络代理">
+        <span class="dot" id="netDot"></span><span id="netText">检测中</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ============ Hero ============ -->
+<section class="hero">
+  <div class="wrap">
+    <span class="badge">
+      <span class="badge-dot"></span> <span id="heroBadge">完全免费 · 无需登录 · 本地运行</span>
+    </span>
+    <h1>把 YouTube 视频<br><em>一键变成可读文稿</em></h1>
+    <p class="lede">
+      粘贴视频链接即可提取完整字幕：支持原语言多轨道、翻译成 100+ 种语言、
+      点击整行跳转到视频对应时间点，并可导出 TXT / SRT / VTT / JSON。
+    </p>
+
+    <div id="app" class="composer">
+      <div class="composer-box">
+        <svg class="composer-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5 1.42 1.42 1.5-1.5a3 3 0 0 1 4.24 4.24l-3 3a3 3 0 0 1-4.24 0zm4 0-1.42-1.42-1.5 1.5a3 3 0 0 1-4.24-4.24l3-3a3 3 0 0 1 4.24 0L15.5 4.4A5 5 0 0 0 8.43 4.4l-3 3a5 5 0 0 0 7.07 7.07z"/></svg>
+        <input id="urlInput" type="text" spellcheck="false" autocomplete="off"
+               placeholder="粘贴 YouTube 视频链接，例如 https://www.youtube.com/watch?v=..."
+               aria-label="YouTube 视频链接">
+        <button id="pasteBtn" class="ghost-btn" type="button" title="从剪贴板粘贴">粘贴</button>
+        <button id="goBtn" class="primary-btn" type="button">
+          <span class="btn-label">提取文稿</span>
+          <span class="spinner" hidden></span>
+        </button>
+      </div>
+
+      <div class="samples">
+        <span class="samples-label">试试示例：</span>
+        <button class="chip" data-url="https://www.youtube.com/watch?v=dQw4w9WgXcQ">Rick Astley</button>
+        <button class="chip" data-url="https://www.youtube.com/watch?v=jNQXAC9IVRw">Me at the zoo</button>
+        <button class="chip" data-url="https://www.youtube.com/watch?v=1WEAJ-DFkHE">MrBeast 长视频</button>
+      </div>
+
+      <div id="statusBar" class="status" hidden></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 结果区 ============ -->
+<section id="result" class="result" hidden>
+  <div class="wrap">
+
+    <div class="result-head">
+      <div class="video-card">
+        <div class="player-wrap">
+          <div id="player"></div>
+          <div id="playerFallback" class="player-fallback" hidden>
+            <img id="fbThumb" alt="">
+            <div class="player-fallback-inner">
+              <svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="rgba(0,0,0,.55)"/><path d="M10 8.5v7l6-3.5z" fill="#fff"/></svg>
+              <p>播放器需可访问 YouTube<br><a id="fbLink" target="_blank" rel="noopener">在 YouTube 打开 →</a></p>
+            </div>
+          </div>
+        </div>
+        <div class="video-meta">
+          <h2 id="vTitle">—</h2>
+          <div class="video-sub">
+            <span id="vAuthor"></span>
+            <span class="sep">·</span><span id="vDuration"></span>
+            <span class="sep">·</span><span id="vViews"></span>
+          </div>
+          <div class="video-tags">
+            <span class="tag" id="tagLang"></span>
+            <span class="tag" id="tagAuto"></span>
+            <span class="tag tag-ok" id="tagSource"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace">
+      <!-- 工具栏 -->
+      <aside class="toolbar">
+        <div class="tool-group">
+          <label class="tool-label" for="langSel">原文字幕轨道</label>
+          <select id="langSel"></select>
+        </div>
+
+        <div class="tool-group">
+          <label class="tool-label" for="tlangSel">翻译为</label>
+          <div class="row">
+            <select id="tlangSel"></select>
+            <button id="translateBtn" class="mini-btn" type="button">翻译</button>
+          </div>
+        </div>
+
+        <div class="tool-group">
+          <label class="tool-label">显示</label>
+          <div class="seg" id="viewSeg">
+            <button class="seg-btn is-on" data-view="lines">逐句</button>
+            <button class="seg-btn" data-view="para">段落</button>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="tsToggle" checked>
+            <span>显示时间戳</span>
+          </label>
+        </div>
+
+        <div class="tool-group">
+          <label class="tool-label" for="searchInput">检索文稿</label>
+          <input id="searchInput" type="search" placeholder="输入关键词…">
+          <div id="searchInfo" class="hint"></div>
+        </div>
+
+        <div class="tool-group">
+          <label class="tool-label">复制 / 导出</label>
+          <div class="btn-grid">
+            <button class="mini-btn" data-copy="plain">复制纯文本</button>
+            <button class="mini-btn" data-copy="stamped">复制带时间戳</button>
+            <button class="mini-btn" data-dl="txt">TXT</button>
+            <button class="mini-btn" data-dl="srt">SRT</button>
+            <button class="mini-btn" data-dl="vtt">VTT</button>
+            <button class="mini-btn" data-dl="json">JSON</button>
+          </div>
+        </div>
+
+        <div class="stats" id="stats"></div>
+
+        <button id="backBtn" class="text-btn" type="button">← 再提取一个视频</button>
+      </aside>
+
+      <!-- 文稿 -->
+      <div class="transcript-panel">
+        <div class="transcript-bar">
+          <span id="trMeta">文稿</span>
+          <span id="trHint" class="hint">点击任意一行可跳转到视频对应时间点</span>
+        </div>
+        <div id="transcript" class="transcript" tabindex="0"></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============ 历史 ============ -->
+<section id="historySec" class="history" hidden>
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>最近提取</h2>
+      <button id="clearHistory" class="text-btn" type="button">清空记录</button>
+    </div>
+    <div id="historyList" class="history-list"></div>
+  </div>
+</section>
+
+<!-- ============ 功能 ============ -->
+<section id="features" class="section">
+  <div class="wrap">
+    <div class="sec-head center">
+      <span class="eyebrow">功能</span>
+      <h2>不只是「把字幕抠出来」</h2>
+      <p class="sec-sub">在做笔记、做二次创作、做内容研究之前，先把素材变成可编辑的文本。</p>
+    </div>
+    <div class="cards">
+      <article class="card">
+        <div class="card-ico ico-red">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 4h16v2H4zm0 5h10v2H4zm0 5h16v2H4zm0 5h7v2H4z"/></svg>
+        </div>
+        <h3>多语言字幕轨道</h3>
+        <p>视频里存在多少条字幕就列出多少条，手动字幕与自动字幕分别标注，可随时切换重新提取。</p>
+      </article>
+      <article class="card">
+        <div class="card-ico ico-blue">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+        </div>
+        <h3>翻译成 100+ 语言</h3>
+        <p>调用 YouTube 官方翻译轨道，直接把文稿转成中文、日文、英文等语言，无需外部翻译服务。</p>
+      </article>
+      <article class="card">
+        <div class="card-ico ico-green">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m1 15h-2v-2h2zm0-4h-2V7h2z"/></svg>
+        </div>
+        <h3>点击跳转播放</h3>
+        <p>左侧播放器与文稿实时联动：点一行跳一段，播放到哪里文稿就高亮到哪里。</p>
+      </article>
+      <article class="card">
+        <div class="card-ico ico-amber">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm-1 7V3.5L18.5 9zM8 13h8v2H8zm0 4h8v2H8z"/></svg>
+        </div>
+        <h3>四种导出格式</h3>
+        <p>纯文本贴进笔记，SRT / VTT 直接挂回剪辑软件，JSON 交给程序做结构化处理。</p>
+      </article>
+      <article class="card">
+        <div class="card-ico ico-purple">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.49 4.49 0 0 1 9.5 14"/></svg>
+        </div>
+        <h3>站内检索与段落模式</h3>
+        <p>关键词高亮定位，逐句与段落两种视图切换，长视频整理成笔记更顺手。</p>
+      </article>
+      <article class="card">
+        <div class="card-ico ico-cyan">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2 2 7v10l10 5 10-5V7zm0 2.18L19.5 8 12 11.82 4.5 8zM4 9.6l7 3.85V20l-7-3.5zm9 10.4v-6.95l7-3.85v6.9z"/></svg>
+        </div>
+        <h3>纯本地、零依赖</h3>
+        <p>所有请求都由你本机的 Node 进程发起，不经过任何第三方服务器，文稿不出本机。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 使用说明 ============ -->
+<section id="how" class="section alt">
+  <div class="wrap">
+    <div class="sec-head center">
+      <span class="eyebrow">使用说明</span>
+      <h2>三步拿到文稿</h2>
+    </div>
+    <ol class="steps">
+      <li>
+        <span class="step-no">1</span>
+        <h3>粘贴链接</h3>
+        <p>支持 watch、youtu.be、shorts、live、embed 等全部链接形态，也可以直接填 11 位视频 ID。</p>
+      </li>
+      <li>
+        <span class="step-no">2</span>
+        <h3>挑选语言</h3>
+        <p>默认自动挑选最合适的字幕轨道；需要其他语言时在左侧下拉框切换，或选「翻译为」得到译文。</p>
+      </li>
+      <li>
+        <span class="step-no">3</span>
+        <h3>带走文稿</h3>
+        <p>复制纯文本或带时间戳，也可以导出 TXT / SRT / VTT / JSON 存到本地。</p>
+      </li>
+    </ol>
+    <div class="notice" id="netNotice">
+      <strong>关于网络：</strong>YouTube 在中国大陆不可直接访问。若提取失败，请先在右上角「网络状态」中填写本机代理地址
+      （如 <code>http://127.0.0.1:7890</code>），或使用 <code>--proxy</code> 参数启动服务。
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section id="faq" class="section">
+  <div class="wrap narrow">
+    <div class="sec-head center">
+      <span class="eyebrow">常见问题</span>
+      <h2>你可能想知道</h2>
+    </div>
+    <div class="faq">
+      <details>
+        <summary>为什么有的视频提不出文稿？</summary>
+        <p>只有视频本身存在字幕时才能提取。如果 UP 主既没上传字幕、也没开启自动字幕，接口就取不到任何内容；此外私享视频、地区限制视频同样无法提取。</p>
+      </details>
+      <details>
+        <summary>提示「接口限流（429）」怎么办？</summary>
+        <p>YouTube 对「按需生成译文」做了较严的频率限制。稍等 10~30 秒再点一次通常即可成功；连续提取多个视频时建议放慢节奏。</p>
+      </details>
+      <details>
+        <summary>翻译质量如何？</summary>
+        <p>译文来自 YouTube 自带的翻译轨道，属于机器翻译，适合快速通读与检索，专业内容建议再人工校对。</p>
+      </details>
+      <details>
+        <summary>文稿会经过第三方服务器吗？</summary>
+        <p>不会。服务运行在你本机，请求由本机进程直接发往 YouTube，文稿只在你自己的浏览器与本地服务之间传递。</p>
+      </details>
+      <details>
+        <summary>能批量提取多个视频吗？</summary>
+        <p>当前版本一次处理一个视频，但保留了最近提取记录，点击即可快速回到之前的结果。批量能力可作为下一步扩展。</p>
+      </details>
+      <details>
+        <summary>支持哪些导出格式？</summary>
+        <p>纯文本 TXT、带时间戳 TXT、字幕格式 SRT 与 WebVTT，以及包含全部轨道与片段时间信息的 JSON。</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ============ 页脚 ============ -->
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <div class="footer-brand">
+      <span class="brand-mark small">
+        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="4" fill="currentColor"/><path d="M10 9.2v5.6l4.8-2.8z" fill="#0a0b0f"/></svg>
+      </span>
+      <span>YT Script · YouTube 文稿提取工具</span>
+    </div>
+    <p class="footer-note">仅用于个人学习与研究，请遵守 YouTube 服务条款与内容版权。文稿版权归原作者所有。</p>
+  </div>
+</footer>
+
+<!-- ============ 网络设置抽屉 ============ -->
+<div id="settingsMask" class="mask" hidden></div>
+<aside id="settings" class="drawer" hidden aria-label="网络设置">
+  <div class="drawer-head">
+    <h3>网络设置</h3>
+    <button id="settingsClose" class="icon-btn" type="button" aria-label="关闭">✕</button>
+  </div>
+  <div class="drawer-body">
+    <p class="drawer-desc">服务会自动尝试直连与常见本地代理端口。若无法访问 YouTube，请在此填写你的代理地址。</p>
+    <label class="tool-label" for="proxyInput">HTTP 代理地址</label>
+    <input id="proxyInput" type="text" placeholder="http://127.0.0.1:7890">
+    <div class="drawer-actions">
+      <button id="proxySave" class="primary-btn small" type="button">保存并测试</button>
+      <button id="proxyAuto" class="mini-btn" type="button">恢复自动探测</button>
+    </div>
+    <div id="proxyResult" class="hint"></div>
+    <div class="drawer-sep"></div>
+    <h4>当前通路</h4>
+    <pre id="proxyInfo" class="code-block">—</pre>
+  </div>
+</aside>
+
+<script src="/app.js"></script>
+</body>
+</html>

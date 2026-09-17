@@ -1,0 +1,7 @@
+# 只上传运行所需文件，本地配置与预览图不进部署包
+config.json
+docs/
+_scratch/
+start.bat
+README.md
+DEPLOY.md
