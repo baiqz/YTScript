@@ -308,7 +308,31 @@ Vercel 项目页 → **Settings** → 拉到底 → **Delete Project**。网址�
 | `memory` 无法设置 | 项目已启用 Fluid Compute，此时不允许在这里配内存。删掉 `vercel.json` 里的 `memory` 字段（本项目配置里已经移除） |
 | `No Output Directory named "public"` | `public/` 没推上去。执行 `git ls-files public/`，应该看到 3 个文件（`index.html`、`styles.css`、`app.js`） |
 
-### 8. 页面上出现「本地运行」字样
+### 8. 页面报 500 · FUNCTION_INVOCATION_FAILED
+
+**现象**：部署成功，但打开网址是 Vercel 的英文错误页
+（`This page is temporarily unavailable / A function needed by this page failed`）。
+关键特征：**连不存在的路径（如 `/nope`）也返回 500 而不是 404**。
+
+**根因**：项目根目录的 `server.js` 是**本地启动器**（常驻 HTTP 服务），
+Vercel 会把它当成 Serverless 函数入口，生成一个「兜底函数」接管所有非静态路由。
+它没有 `(req, res)` 处理器，一被调用就崩 —— 连 `/api/health` 都走不到。
+
+容易误判的地方：**静态文件优先级高于函数**，所以 `/app.js`、`/index.html`
+这类能正常返回 200，看起来像「只有首页坏了」，实际是所有动态路由全崩。
+
+**修复**（本项目已处理，重搭时务必保留这三项）：
+
+| 文件 | 改法 |
+| --- | --- |
+| `.vercelignore` | 加入 `server.js` —— 云端用不到本地启动器 |
+| `package.json` | 删掉 `"main": "server.js"` —— 消除函数入口线索 |
+| `vercel.json` | 显式声明 `"framework": null`，并加 `rewrites` 让 `/` 指向 `/index.html` |
+
+排查这类问题的通用手法：**拿一个必然不存在的路径去请求**。
+正常站点返回 404，若返回 500 或别的错误页，就说明有兜底路由在截胡。
+
+### 9. 页面上出现「本地运行」字样
 
 说明前端没读到云端标识。访问 `你的网址/api/health` 看看 `mode` 是不是 `public`——若不是，多半是部署的还是旧代码，重新 push 一次即可。
 
