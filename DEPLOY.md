@@ -328,36 +328,67 @@ Vercel 的共享机房 IP 会被判高风险，你家宽带的住宅 IP 不会 �
 
 ---
 
-#### 准备：放一份 cloudflared.exe
+#### 准备：选一条隧道
 
-隧道靠 Cloudflare 的 `cloudflared` 打通，它是一个**免安装的单文件程序**：
+隧道的作用是把 `http://127.0.0.1:8801` 变成一条公网地址，云端才够得着。
+**这一步决定了你以后要不要反复回来改配置**，所以先选好：
 
-1. 下载（Windows 64 位，直链）：
+| | **A. ngrok**（推荐） | **B. cloudflared** |
+| --- | --- | --- |
+| 要注册吗 | 要（免费，邮箱即可） | **不要** |
+| 公网地址 | **永久固定**，配一次再也不管 | **每次重启都会变**，变了就得回 Vercel 改 |
+| 免费额度 | 2 万请求/月、1GB 流量 | 无限（无账号隧道无可用性保证） |
+| 代价 | 多花 5 分钟注册 | 每次重启 relay.bat 都要回 Vercel 改一次 |
 
-   ```
-   https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
-   ```
+**如果这台电脑会长期开着，选 A**（省事得多）。只是想先试试效果，选 B。
 
-2. 放进这个目录：
+##### A. ngrok（地址永久固定）
 
+1. 注册：<https://dashboard.ngrok.com/signup>（邮箱注册，免费计划就够）
+2. 下载 Windows 版 <https://ngrok.com/download>，解压出 `ngrok.exe`，放进：
    ```
    E:\workbuddyspace1\youtube-transcript\
    ```
+3. 在 ngrok 后台首页复制你的 **authtoken**，然后在本目录开个终端执行一次：
+   ```bat
+   ngrok.exe config add-authtoken 你的authtoken
+   ```
+4. 在 ngrok 后台 **Universal Gateway → Domains** 里能看到分配给你的**固定域名**
+   （形如 `abc123xyz.ngrok-free.dev`）。它就是以后一直用的 `RELAY_URL`。
 
-   > **不用改名**，`relay.bat` 认 `cloudflared-windows-amd64.exe` 也认 `cloudflared.exe`。
-   > 放在 `tools\` 子目录下同样可以。
-   > 如果你下载时 GitHub 打不开，在项目目录里用代理拉一次即可：
-   > ```
-   > curl -x http://127.0.0.1:33210 -L -o cloudflared.exe "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-   > ```
+> 配好之后，`relay.bat` 会**自动优先选 ngrok**，你不用改任何脚本。
 
-   这个文件**不会被提交到 Git**（`.gitignore` 已排除，它有 20MB 左右）。
+##### B. cloudflared（免注册，下载即用）
+
+下载（Windows 64 位直链）：
+
+```
+https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe
+```
+
+放进同一个目录：
+
+```
+E:\workbuddyspace1\youtube-transcript\
+```
+
+> **不用改名**，认 `cloudflared-windows-amd64.exe` 也认 `cloudflared.exe`，
+> 放 `tools\` 子目录下同样可以。
+> 如果 GitHub 打不开，在项目目录里用代理拉一次：
+> ```
+> curl -x http://127.0.0.1:33210 -L -o cloudflared.exe "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+> ```
 
 不需要注册 Cloudflare 账号，也不需要域名 —— 用的是它的免费临时隧道。
 
+> **两个文件都不会被提交到 Git**（`.gitignore` 已排除，cloudflared 有 50MB 左右）。
+
+**两个都没放会怎样？** 不会出错：`relay.bat` 会打印出上面这两种获取方式让你选，
+站点则自动退回云端直连（还能用，只是部分视频会被风控拦下）。
+
 ---
 
-#### 操作：双击 relay.bat，跟着两步走
+#### 操作：双击 relay.bat
 
 双击：
 
@@ -365,51 +396,75 @@ Vercel 的共享机房 IP 会被判高风险，你家宽带的住宅 IP 不会 �
 E:\workbuddyspace1\youtube-transcript\relay.bat
 ```
 
-它会依次做四件事，**窗口里的提示就是你要抄的两个值**：
+窗口会依次走三个阶段。**你只需要看最后的配置块，照抄两个值。**
 
-**第 1 步 · 抄令牌**
-
-窗口会打出：
+**阶段 1 · 打印令牌**
 
 ```
-  Step 1 of 2 - copy this token into Vercel
+  Step 1 of 2 - your relay token
 
       RELAY_TOKEN = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-> 这个令牌是首次运行时自动生成的（32 位随机串），存在本地 `config.json` 里，
-> **之后每次运行都是同一个**，不会变。
+> 首次运行时自动生成（32 位随机串），存在本地 `config.json` 里，
+> **之后每次运行都是同一个值**，永不变。所以这个变量只需配一次。
 
-打开 <https://vercel.com> → 你的项目 → **Settings → Environment Variables**，新增一条：
+**阶段 2 · 起本地服务 + 开隧道**
+
+本地服务固定占用 **8801** 端口（中继模式不顺延端口）。
+接着它会识别隧道程序并开始建连：
+
+```
+  隧道程序：ngrok  —— 地址永久固定，配一次以后不用再改
+```
+
+然后窗口会刷一段隧道程序自己的日志（`INF ...` 那些），**不用管**，属于正常输出。
+
+**阶段 3 · 配置块（重点）**
+
+隧道一建好，窗口会打出这样的块，**地址会自动复制到剪贴板**：
+
+```
+================================================================
+  隧道已就绪 —— 把下面两个值填到部署平台
+================================================================
+
+  1) RELAY_URL
+     https://xxxx.trycloudflare.com
+     （已复制到剪贴板，直接 Ctrl+V 即可）
+
+  2) RELAY_TOKEN
+     xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+  位置：Vercel → 你的项目 → Settings → Environment Variables
+
+  填完必须手动 Redeploy 一次 —— 环境变量改动不会自动生效，
+  这是最容易漏掉的一步。
+```
+
+紧接着它会**从公网侧回打一次本机**做自检：
+
+```
+  ✓ 自检通过 —— 隧道确实把请求送到了本机。
+    relayMode=true  relayTokenSet=true
+```
+
+> 看到 `✓ 自检通过` 就说明**隧道这一端完全没问题**，可以放心去填 Vercel 了。
+> 若显示 `✗ 自检没通过`，说明地址拿到了但公网还够不着 ——
+> 常见原因是边缘路由刚建立、需要再等十几秒，重新跑一次即可。
+
+**然后去 Vercel 填两个变量**：<https://vercel.com> → 你的项目 → **Settings → Environment Variables**
 
 | Key | Value |
 | --- | --- |
-| `RELAY_TOKEN` | 上面抄下来的那串 |
+| `RELAY_URL` | 上面那条地址（**结尾不要带 `/`**） |
+| `RELAY_TOKEN` | 上面那串令牌 |
 
-**第 2 步 · 抄地址**
-
-接着窗口会启动本地服务（固定占用 **8801** 端口）并开出隧道，等几秒会出现一行：
-
-```
-+--------------------------------------------------------------------------------------------+
-|  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):   |
-|  https://random-words-here.trycloudflare.com                                               |
-+--------------------------------------------------------------------------------------------+
-```
-
-把那条 `https://xxxx.trycloudflare.com` 也加到 Vercel：
-
-| Key | Value |
-| --- | --- |
-| `RELAY_URL` | `https://random-words-here.trycloudflare.com` |
-
-**（注意：不要带结尾的 `/`）**
-
-**第 3 步 · 重新部署**
+**最后一步 · 重新部署**
 
 Vercel → **Deployments** → 最新那条 → 右侧 **⋯** → **Redeploy**。
 
-> 环境变量改动**不会**自动生效，必须手动 Redeploy 一次。这是最容易漏掉的一步。
+> ⚠️ 环境变量改动**不会**自动生效，必须手动 Redeploy 一次。这是最容易漏掉的一步。
 
 搞定。之后**只要这个窗口开着**，云端就会优先走你家出口。窗口一关，站点会自动退回云端直连
 （还能用，但恢复到 4.5 描述的那种「部分视频被拦」的状态）。
@@ -452,14 +507,25 @@ curl -s "https://<你的域名>/api/transcript?url=https://www.youtube.com/watch
 
 #### 几个必须知道的限制
 
-**① 地址每次重启都会变。**
+**① 只有 cloudflared 的地址会变；换成 ngrok 就永久固定。**
 
-`trycloudflare` 是**临时**隧道，每次运行 `relay.bat` 都会分到一个**新的随机域名**。
-所以**每次重启隧道后，都要回 Vercel 把 `RELAY_URL` 改成新地址并 Redeploy**。
+| 隧道 | 地址行为 |
+| --- | --- |
+| **ngrok** | **永久固定**（形如 `abc123.ngrok-free.dev`），`RELAY_URL` 配一次就再也不用改 |
+| cloudflared | `trycloudflare` 是**临时**隧道，**每次重启 `relay.bat` 都会分到新的随机域名**，变了就得回 Vercel 改 `RELAY_URL` 并 Redeploy |
 
-> 嫌麻烦的话可以申请一个固定的命名隧道（named tunnel）：需要 Cloudflare 账号 + 自己的域名，
-> 配好后地址固定不变。本项目不依赖这一点，任何隧道（ngrok / frp / localhost.run）都可以，
-> 只要它能把 `http://127.0.0.1:8801` 暴露成一个 https 地址。
+> 所以如果你打算长期开着，**建议切到 ngrok**（准备那节有步骤）。
+> `relay.bat` 会自动优先选 ngrok，切过去之后什么都不用改。
+>
+> 其他隧道（frp / localhost.run / 命名 Cloudflare 隧道）也都可以，
+> 只要能把 `http://127.0.0.1:8801` 暴露成一个 https 地址 —— 本项目不依赖某一家。
+> 但在换用它们之前，`relay.bat` 认不出来（它只自动识别这两家）。
+
+**①b. ngrok 免费版的浏览器警告页不影响本工具。**
+
+ngrok 免费版会在**浏览器打开的 HTML 页面**前插一个「你正在访问 ngrok 服务」的警告页。
+本工具的转发请求是**程序发起**的 API 调用，本来就不受影响；
+而且转发时已经带了 `ngrok-skip-browser-warning` 头，可以确保永不被拦。
 
 **② 端口固定 8801，不会自动顺延。**
 

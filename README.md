@@ -145,9 +145,12 @@ curl "http://127.0.0.1:8790/api/transcript?url=https://youtu.be/dQw4w9WgXcQ&tlan
 
 **三步**：
 
-1. 把 `cloudflared.exe` 放进项目目录（下载地址见 `DEPLOY.md` 4.6）
-2. 双击 **`relay.bat`**，它会打印一个 `RELAY_TOKEN`，并开出一条 `https://xxx.trycloudflare.com` 隧道
-3. 把这两个值填到部署平台的 `RELAY_TOKEN` / `RELAY_URL` 环境变量，然后 **Redeploy**
+1. 准备一条隧道（二选一，详见 `DEPLOY.md` 4.6）：
+   - **ngrok** —— 免费账号自带**永久固定**域名，配一次以后不用再管（推荐）
+   - **cloudflared** —— 免注册、下载即用，但地址**每次重启都会变**，变了要回部署平台改
+2. 双击 **`relay.bat`**，它会打印令牌、起服务、开隧道，并给出**配置块**（地址自动复制到剪贴板），
+   同时**从公网侧回打一次自检**，确认隧道真的通到了本机
+3. 把 `RELAY_TOKEN` / `RELAY_URL` 填到部署平台的环境变量，然后 **Redeploy**
 
 之后只要那个窗口开着，云端就走你家出口。窗口关了会自动退回云端直连（站点不会挂）。
 
@@ -183,6 +186,7 @@ youtube-transcript/
 │  ├─ http-client.js      零依赖 HTTP 客户端（CONNECT 隧道 / 解压 / 通路择优）
 │  ├─ youtube.js          取数与字幕解析核心
 │  ├─ relay.js            本机中继：把提取请求转发回本机出口
+│  ├─ relay-tunnel.js     起公网隧道（ngrok / cloudflared），仅本地使用
 │  ├─ guard.js            限流 / 超时护栏 / 定长时间比较
 │  ├─ api-respond.js      统一响应与错误封装
 │  ├─ util.js             通用工具

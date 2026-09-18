@@ -7,6 +7,8 @@ relay.bat
 README.md
 DEPLOY.md
 cloudflared.exe
+cloudflared-*.exe
+ngrok.exe
 tools/
 
 # server.js 是本地启动器（常驻 HTTP 服务），云端用不到。

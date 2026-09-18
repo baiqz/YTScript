@@ -4,11 +4,13 @@ node_modules/
 # 本地配置：包含你自己的代理地址和中继令牌，绝不要提交
 config.json
 
-# 隧道程序：体积约 20MB，本地放一份即可，不入库
-# （relay.bat 需要它，下载地址见 DEPLOY.md 4.6）
+# 隧道程序：体积大（cloudflared 约 50MB），本地放一份即可，不入库
+# （relay.bat 需要其中之一，获取方式见 DEPLOY.md 4.6）
 cloudflared.exe
 cloudflared-windows-amd64.exe
 cloudflared-*.exe
+ngrok.exe
+ngrok-v*.zip
 tools/
 
 # 编辑器 / 系统
