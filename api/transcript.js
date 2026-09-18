@@ -8,9 +8,16 @@
 
 const config = require('../lib/config');
 const { fetchTranscript } = require('../lib/youtube');
-const { json, errorPayload, cacheHeaders, getParam } = require('../lib/api-respond');
+const {
+  json,
+  errorPayload,
+  cacheHeaders,
+  getParam,
+  statusForCode,
+  publicSafeRelayBody,
+} = require('../lib/api-respond');
 const { clientIp, checkAccess, checkRateLimit, withTimeout } = require('../lib/guard');
-const { relayUsable, relayTranscript } = require('../lib/relay');
+const { relayUsable, relayTranscript, describeRelayFailure } = require('../lib/relay');
 
 // 复用实例内的网络通路判定结果，避免每次调用重复探测
 const { ensureTransport } = require('../lib/http-client');
@@ -78,14 +85,20 @@ module.exports = async function handler(req, res) {
 
       if (out && !out.relaySideFailure) {
         const body = { ...out.payload, viaRelay: true, elapsedMs: Date.now() - started };
-        if (out.payload && out.payload.ok) {
+        if (out.payload.ok === true) {
           const degraded = Boolean(tlang && !out.payload.translatedTo);
           return json(res, 200, body, degraded ? { 'Cache-Control': 'no-store' } : cacheHeaders(force, cfg));
         }
-        // 中继正常返回的业务错误原样透传，不要再去直连撞一次风控
-        return json(res, out.status || 502, body);
+        /*
+         * 中继正常返回的业务错误原样透传，不要再去直连撞一次风控
+         * （同一出口对同一视频的拦截是稳定复现的，重试纯属浪费预算）。
+         *
+         * 状态码要从 code 还原：中继那端不能把 502/504 发出来，否则会被
+         * Cloudflare 换成它自己的错误页（详见 api-respond 的 relaySafeStatus）。
+         */
+        return json(res, statusForCode(out.payload.code, out.status || 502), publicSafeRelayBody(body, cfg));
       }
-      if (out) relayNote = `本机中继拒绝了请求（HTTP ${out.status}），已改走云端直连。`;
+      if (out) relayNote = `本机中继不可用（${describeRelayFailure(out.status, out.payload)}），已改走云端直连。`;
     }
 
     // 确保网络通路已判定（单候选时为零开销）
