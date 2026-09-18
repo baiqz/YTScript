@@ -17,7 +17,7 @@ const {
   publicSafeRelayBody,
 } = require('../lib/api-respond');
 const { clientIp, checkAccess, checkRateLimit, withTimeout } = require('../lib/guard');
-const { relayUsable, relayTranscript, describeRelayFailure } = require('../lib/relay');
+const { relayUsable, relayTranscript, describeRelayFailure, briefRelayFailure, shouldFallbackToDirect } = require('../lib/relay');
 
 // 复用实例内的网络通路判定结果，避免每次调用重复探测
 const { ensureTransport } = require('../lib/http-client');
@@ -63,6 +63,18 @@ module.exports = async function handler(req, res) {
   const started = Date.now();
   let relayNote = '';
 
+  /*
+   * 中继没走通时要说清原因，但两套措辞：
+   *   - 本机主人看的版本会点名 config.json / RELAY_TOKEN 该去哪核对，排障直接照着做；
+   *   - 公开部署下换成短版，只说清是「鉴权 / 隧道 / 地址」哪一类，不暴露内部实现。
+   */
+  const relayProblem = (status, payload, err) => {
+    const detail = err ? err.message : describeRelayFailure(status, payload);
+    return cfg.publicMode
+      ? `本机中继当前不可用（${err ? '连不上' : briefRelayFailure(status, payload)}），已改走云端直连。`
+      : `本机中继不可用（${detail}），已改走云端直连。`;
+  };
+
   // 翻译要现场生成，比首次提取慢得多，因此给两条不同的预算。
   // 中继与直连共用这一份预算 —— 否则「中继超时 45s + 再降级直连 25s」会超出
   // 无服务器平台的函数时长上限，被平台直接掐断，连错误信息都拿不到。
@@ -80,7 +92,7 @@ module.exports = async function handler(req, res) {
       try {
         out = await relayTranscript(cfg, { req, clientIp: clientIp(req), budgetMs: totalMs });
       } catch (e) {
-        relayNote = `本机中继不可用（${e.message}），已改走云端直连。`;
+        relayNote = relayProblem(0, null, e);
       }
 
       if (out && !out.relaySideFailure) {
@@ -90,15 +102,23 @@ module.exports = async function handler(req, res) {
           return json(res, 200, body, degraded ? { 'Cache-Control': 'no-store' } : cacheHeaders(force, cfg));
         }
         /*
-         * 中继正常返回的业务错误原样透传，不要再去直连撞一次风控
-         * （同一出口对同一视频的拦截是稳定复现的，重试纯属浪费预算）。
+         * 中继返回的**内容级**判定（如 POT_REQUIRED / NO_CAPTIONS）原样透传：
+         * 同一出口对同一视频的拦截是稳定复现的，再去直连撞一次纯属浪费预算。
          *
-         * 状态码要从 code 还原：中继那端不能把 502/504 发出来，否则会被
-         * Cloudflare 换成它自己的错误页（详见 api-respond 的 relaySafeStatus）。
+         * 但**网络级**失败（TIMEOUT / FETCH_FAILED）只说明中继那边不通
+         * （代理被关、断网），这时直连真的可能成功 —— 两个出口本来就是不同的 IP，
+         * 所以继续往下走。判据见 lib/relay.js 的 RELAY_FALLBACK_CODES。
          */
-        return json(res, statusForCode(out.payload.code, out.status || 502), publicSafeRelayBody(body, cfg));
+        if (!shouldFallbackToDirect(out.payload.code)) {
+          // 状态码要从 code 还原：中继那端不能把 502/504 发出来，否则会被
+          // Cloudflare 换成它自己的错误页（详见 api-respond 的 relaySafeStatus）
+          return json(res, statusForCode(out.payload.code, out.status || 502), publicSafeRelayBody(body, cfg));
+        }
+        relayNote = cfg.publicMode
+          ? '本机中继当前不可用（网络不通），已改走云端直连。'
+          : `本机中继网络不通（${out.payload.error || out.payload.code}），已改走云端直连。`;
       }
-      if (out) relayNote = `本机中继不可用（${describeRelayFailure(out.status, out.payload)}），已改走云端直连。`;
+      if (out && !relayNote) relayNote = relayProblem(out.status, out.payload);
     }
 
     // 确保网络通路已判定（单候选时为零开销）
@@ -133,6 +153,11 @@ module.exports = async function handler(req, res) {
     );
   } catch (e) {
     const { status, body } = errorPayload(e, cfg);
+    /*
+     * 直连也失败时，中继那条线索更要留着 —— 这是用户手上唯一的非「YouTube 又抽风了」
+     * 的解释。只在确实配了中继（relayNote 非空）时追加，避免给没配中继的人添噪音。
+     */
+    if (relayNote) body.hint = `${relayNote} ${body.hint || ''}`.trim();
     return json(res, status, body);
   }
 };
